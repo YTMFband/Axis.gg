@@ -1,0 +1,1721 @@
+local Users:Players = game:GetService('Players');
+local ReplicatedStorage = game:GetService('ReplicatedStorage');
+local RunService:RunService = game:GetService('RunService')
+local UserInputService:UserInputService = game:GetService('UserInputService');
+local Camera = workspace.CurrentCamera;
+
+if not ReplicatedStorage:FindFirstChild('Modules') or not ReplicatedStorage:FindFirstChild('Modules'):FindFirstChild('GunHandler') then
+	Users.LocalPlayer:Kick('Game not supportable check the list before use it again')
+end
+
+local GunHandler = require(ReplicatedStorage.Modules.GunHandler)
+
+
+
+local L_Player = Users.LocalPlayer;
+
+
+local SwitchGunsDebounce = false;
+local SwitchGunsTotalShoots = 0;
+local LastTickUpdateSilentAim = 0;
+local MouseSmooth = UserInputService:GetMouseLocation();
+
+local Axis = {
+	Main = {
+		SilentAim = {
+			Enabled = false;
+			HitboxPart = 'Head';
+			ClosetTo = 'Mouse';
+
+
+			NearestPart = {
+				Enabled = false;
+				ClosetTo = 'Mouse';
+				Parts = {}
+
+			},
+
+			HitChance = {
+				WalkingChance = 100;
+				JumpingChance = 100;
+			},
+
+			Visuals = {
+				ShowFov = false;
+				Filled = false;
+				FovOnTarget = false;
+
+				FovColor = Color3.fromRGB(20, 176, 238);
+				OutlineColor = Color3.fromRGB(12, 12, 12);
+				FilledColor = Color3.fromRGB(20, 176, 238);
+				Smooth = 0;
+
+				FovPx = 200;
+
+
+
+
+				OutlinePx = 4,
+				ThicknessPx = 2,
+
+				FovTransparency = 1;
+				OutlineTransparency = 1;
+				FilledTransparency = 0.25;
+
+			},
+
+
+
+			Checks = {
+
+				Enabled = false;
+				KO = false;
+				WallCheck = false;
+				FriendCheck = false;
+				CrewCheck = false;
+				GrabbedCheck = false;
+				Distance = false;
+				DistanceSize = 250;
+
+			}
+
+
+
+		}
+	},
+
+
+	Miscs = {
+		Guns = {
+			GunMacro = {
+				Enabled = false,
+				Cooldown = 0.05,
+				TimeLoop = 1,
+				Keybind = '',
+				AmmoCheck = false;
+				AutoFire = false,
+				AutoFireMode = 'Normal',
+				GunOrder = {},
+				RevolverSettings  = {
+					Enabled = false;
+					Holding = false;
+					AutoFire = false;
+					AutoFireMode = 'Normal';
+					Keybind = '',
+					KeybindMode = 'Hold'
+
+				}
+
+			}
+		}
+	}
+}
+
+
+local Script = {
+	Target = {
+		Player = nil;
+		PlayerPart = nil;
+	},
+	Players = {},
+	Drawing = {
+		Fov = {
+			Fov = nil,
+			Filled = nil,
+			Outline = nil,
+		}
+	}
+}
+
+function DrawFov(Thickness, NumSide, Radius, Color, Transparency)
+    local Default = Drawing.new('Circle')
+    Default.Color = Color
+    Default.Thickness = Thickness
+    Default.Visible = false
+    Default.Transparency = Transparency or 1
+    Default.Radius = Radius
+    Default.NumSide = NumSide
+    return Default
+end
+
+
+Script.Drawing.Fov.Filled = DrawFov(0, 100, 200, Color3.fromRGB(20, 176, 238), 0.25)
+Script.Drawing.Fov.Outline = DrawFov(Axis.Main.SilentAim.Visuals.OutlinePx, 100, 200, Color3.fromRGB(12, 12, 12), 1)
+Script.Drawing.Fov.Fov = DrawFov(Axis.Main.SilentAim.Visuals.ThicknessPx, 100, 200, Color3.fromRGB(20, 176, 238), 1)
+
+function WallCheck(Part: Instance)
+    if not Part then return false end
+    local RayCastParams = RaycastParams.new()
+    RayCastParams.FilterType = Enum.RaycastFilterType.Exclude
+    RayCastParams.IgnoreWater = true
+    local Character = L_Player.Character
+    if Character then
+        RayCastParams.FilterDescendantsInstances = {Character}
+    end
+    local CameraPosition = Camera.CFrame.Position
+    local TargetPosition = Part.Position
+    local Direction = TargetPosition - CameraPosition
+    local RayCastResult = workspace:Raycast(CameraPosition, Direction, RayCastParams)
+    if RayCastResult then
+        local HitInstance = RayCastResult.Instance
+        return HitInstance == Part or HitInstance:IsDescendantOf(Part.Parent)
+    end
+    return true
+end
+
+function IsPlayerDown(p1 : Player)
+
+    if not p1.Character then
+        return false
+    end
+    
+    if not p1.Character:FindFirstChild('BodyEffects') then
+        return false
+    end
+
+    if  p1.Character:FindFirstChild('BodyEffects')['K.O'].Value then
+        return true
+    end
+
+    return false
+end
+
+
+function CrewCheck(p1, p2)
+	local p1Information = p1:FindFirstChild('DataFolder'):FindFirstChild('Information')
+	local p2Information = p2:FindFirstChild('DataFolder'):FindFirstChild('Information')
+
+	if not p1Information:FindFirstChild('Crew') then
+		return false
+	end
+
+	if not p2Information:FindFirstChild('Crew') then
+		return false
+	end
+
+	if p1Information:FindFirstChild('Crew').Value == p2Information:FindFirstChild('Crew').Value then
+		return true
+	end
+
+	return false
+end
+
+
+function GetClosetTarget()
+	local PlayerTarget
+	local PartTarget
+	local MousePosition = UserInputService:GetMouseLocation()
+	local Fov = Axis.Main.SilentAim.Visuals.FovPx
+
+	for i=1, #Script.Players do
+		local NewPlayer:Player = Script.Players[i]
+		local Character = NewPlayer.Character
+		if not Character then
+			continue
+		end
+		if not Character:FindFirstChild('HumanoidRootPart') then
+            continue
+        end
+        if not Character:FindFirstChild('Head') then
+            continue
+        end
+
+		local hrp = Character['HumanoidRootPart']
+        local head = Character['Head']
+
+		if Axis.Main.SilentAim.NearestPart.Enabled then
+
+
+
+
+		else
+
+			local Part:BasePart = Character[Axis.Main.SilentAim.HitboxPart]
+			if not Part then
+				continue
+			end
+			local pos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+			local Vlx3 = MousePosition
+			if Axis.Main.SilentAim.ClosetTo == 'Center' then
+				Vlx3 = Camera.ViewportSize / 2
+			end
+			local Dist = (Vlx3 - Vector2.new(pos.X, pos.Y)).Magnitude
+			if Dist < Fov and onScreen then
+				if Axis.Main.SilentAim.Checks.Enabled then
+					
+					if Axis.Main.SilentAim.Checks.WallCheck and not WallCheck(head) then
+					continue
+					end
+
+					if Axis.Main.SilentAim.Checks.KO and IsPlayerDown(NewPlayer)  then
+                    continue
+                    end
+
+					if Axis.Main.SilentAim.Checks.CrewCheck and CrewCheck(L_Player, NewPlayer) then
+					continue
+					end
+
+					if Axis.Main.SilentAim.Checks.CrewCheck then
+					if NewPlayer:IsFriendsWithAsync(L_Player.UserId) and L_Player:IsFriendsWithAsync(NewPlayer.UserId) then
+					continue
+					end
+					end
+
+					if Axis.Main.SilentAim.Checks.GrabbedCheck then
+					if Character:FindFirstChild('GRABBING_CONSTRAINT') then
+					continue
+					end
+					end
+
+					if Axis.Main.SilentAim.Checks.Distance then
+						local Direction = (hrp.Position - L_Player.Character.HumanoidRootPart.Position).Magnitude
+						if Direction > Axis.Main.SilentAim.Checks.DistanceSize then
+						continue
+						end
+					end
+				end
+
+				Fov = Dist
+				PlayerTarget = NewPlayer
+				PartTarget = Part
+			end
+		end
+	end
+
+	Script.Target.Player = PlayerTarget
+	Script.Target.PlayerPart =  PartTarget
+
+end
+
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+
+
+RunService.RenderStepped:Connect(function()
+	local MousePos = UserInputService:GetMouseLocation()
+
+	if Axis.Main.SilentAim.Visuals.ShowFov then
+		if not Axis.Main.SilentAim.Visuals.FovOnTarget then
+			local alpha = math.clamp(1 / (Axis.Main.SilentAim.Visuals.Smooth * 0.5 + 1), 0.001, 1)
+
+			MouseSmooth = MouseSmooth:Lerp(MousePos, alpha)
+
+			for index, value in next, Script.Drawing.Fov do
+				value.Position = MouseSmooth
+			end
+
+			Script.Drawing.Fov.Fov.Visible = true
+			Script.Drawing.Fov.Outline.Visible = true
+			Script.Drawing.Fov.Filled.Visible = Axis.Main.SilentAim.Visuals.Filled
+			Script.Drawing.Fov.Filled.Filled = Script.Drawing.Fov.Filled.Visible
+		else
+			if Script.Target.PlayerPart then
+				local pos, c = Camera:WorldToViewportPoint(Script.Target.PlayerPart.Position)
+				local alpha = math.clamp(1 / (Axis.Main.SilentAim.Visuals.Smooth * 0.5 + 1), 0.001, 1)
+				MouseSmooth = MouseSmooth:Lerp(Vector2.new(pos.X, pos.Y), alpha)
+				for index, value in next, Script.Drawing.Fov do
+					value.Position = MouseSmooth
+				end
+
+				Script.Drawing.Fov.Fov.Visible = c
+				Script.Drawing.Fov.Outline.Visible = c
+				Script.Drawing.Fov.Filled.Visible = (Axis.Main.SilentAim.Visuals.Filled and c) or false
+				Script.Drawing.Fov.Filled.Filled = (Axis.Main.SilentAim.Visuals.Filled and c) or false
+			else
+				Script.Drawing.Fov.Fov.Visible = false
+				Script.Drawing.Fov.Outline.Visible = false
+				Script.Drawing.Fov.Filled.Visible = false
+				Script.Drawing.Fov.Filled.Filled = false
+			end
+		end
+
+
+		Script.Drawing.Fov.Filled.Transparency = Axis.Main.SilentAim.Visuals.FilledTransparency
+		Script.Drawing.Fov.Filled.Radius = Axis.Main.SilentAim.Visuals.FovPx
+		Script.Drawing.Fov.Filled.Color = Axis.Main.SilentAim.Visuals.FilledColor
+
+		Script.Drawing.Fov.Fov.Radius = Axis.Main.SilentAim.Visuals.FovPx
+		Script.Drawing.Fov.Fov.Thickness = Axis.Main.SilentAim.Visuals.ThicknessPx
+		Script.Drawing.Fov.Fov.Transparency = Axis.Main.SilentAim.Visuals.FovTransparency
+		Script.Drawing.Fov.Fov.Color = Axis.Main.SilentAim.Visuals.FovColor
+
+		Script.Drawing.Fov.Outline.Radius = Script.Drawing.Fov.Fov.Radius
+		Script.Drawing.Fov.Outline.Thickness = Axis.Main.SilentAim.Visuals.OutlinePx
+		Script.Drawing.Fov.Outline.Transparency = Axis.Main.SilentAim.Visuals.OutlineTransparency
+		Script.Drawing.Fov.Outline.Color = Axis.Main.SilentAim.Visuals.OutlineColor
+	else
+		Script.Drawing.Fov.Fov.Visible = false
+		Script.Drawing.Fov.Outline.Visible = false
+	end
+
+end)
+
+RunService.PostSimulation:Connect(function(deltaTime)
+
+	if Axis.Main.SilentAim.Enabled then
+		if tick() - LastTickUpdateSilentAim > 0.06 then
+			LastTickUpdateSilentAim = tick()
+			GetClosetTarget()
+		end
+	end
+
+
+	if Axis.Miscs.Guns.GunMacro.RevolverSettings.Enabled then
+		if L_Player.Character then
+			local Rev:Tool = L_Player.Character:FindFirstChild('[Revolver]')
+			if Rev and Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding and Axis.Miscs.Guns.GunMacro.RevolverSettings.AutoFire then
+				if Axis.Miscs.Guns.GunMacro.RevolverSettings.AutoFireMode == 'Normal' then
+					Rev:Activate()
+				elseif Axis.Miscs.Guns.GunMacro.RevolverSettings.AutoFireMode == 'TriggerBot'  then
+					local mouse = UserInputService:GetMouseLocation()
+					local Raycast = Camera:ViewportPointToRay(mouse.X, mouse.Y);
+					rayParams.FilterDescendantsInstances = {L_Player.Character}
+					local RaycastResult = workspace:Raycast(Raycast.Origin, Raycast.Direction * 500, rayParams);
+					if RaycastResult and RaycastResult.Instance and RaycastResult.Instance:IsDescendantOf(game.workspace.Players) then
+						Rev:Activate()
+					end
+				end
+			end
+		end
+	end
+end)
+
+
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	if gameProcessedEvent then return end
+	if Axis.Miscs.Guns.GunMacro.Enabled and Axis.Miscs.Guns.GunMacro.Keybind ~= '' then
+		if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Guns.GunMacro.Keybind)]  then
+			if not L_Player.Character then
+				return
+			end
+
+			for Toolname, bcb in next, Axis.Miscs.Guns.GunMacro.GunOrder do
+				local EquippedTool = L_Player.Character:FindFirstChild(Toolname) or L_Player.Backpack:FindFirstChild(Toolname)
+				if Axis.Miscs.Guns.GunMacro.AmmoCheck then
+					if EquippedTool:FindFirstChild('Ammo').Value == 0 then
+						return
+					end
+
+				end
+
+				local Humanoid:Humanoid = L_Player.Character:FindFirstChild('Humanoid')
+				if EquippedTool then
+
+					if EquippedTool.Parent == L_Player.Backpack then
+						Humanoid:EquipTool(EquippedTool)
+						task.wait()
+					end
+
+					if Axis.Miscs.Guns.GunMacro.AutoFire then
+						if Axis.Miscs.Guns.GunMacro.AutoFireMode == 'Normal' then
+							EquippedTool:Activate()
+						elseif  Axis.Miscs.Guns.GunMacro.AutoFireMode == 'TriggerBot' then
+							local mouse = UserInputService:GetMouseLocation()
+							local Raycast = Camera:ViewportPointToRay(mouse.X, mouse.Y);
+							rayParams.FilterDescendantsInstances = {L_Player.Character}
+							local RaycastResult = workspace:Raycast(Raycast.Origin, Raycast.Direction * 500, rayParams);
+							if RaycastResult and RaycastResult.Instance and RaycastResult.Instance:IsDescendantOf(game.workspace.Players) then
+								EquippedTool:Activate()
+							end
+						end
+					end
+
+					RunService.RenderStepped:Wait()
+					Humanoid:UnequipTools()
+				end
+
+
+				task.wait(Axis.Miscs.Guns.GunMacro.Cooldown)
+			end
+		end
+	end
+
+	if Axis.Miscs.Guns.GunMacro.RevolverSettings.Enabled and Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind ~= '' then
+		if Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind == 'MouseButton1' or Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind == 'MouseButton2' then
+			if input.UserInputType == Enum.UserInputType[tostring(Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind)] then
+				if Axis.Miscs.Guns.GunMacro.RevolverSettings.KeybindMode == 'Hold' then
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding = true
+				else
+					Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding  = not Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding 
+				end
+			end
+		else
+			if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind)] then
+				if Axis.Miscs.Guns.GunMacro.RevolverSettings.KeybindMode == 'Hold' then
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding = true
+				else
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding  = not Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding 
+				end
+			end
+		end
+	end
+
+
+
+end)
+
+
+local oldGetAim = GunHandler.GetAim
+
+GunHandler.GetAim = function(p17, ...)
+    if Axis.Main.SilentAim.Enabled and Script.Target.PlayerPart then
+		local NewHookPosition = Script.Target.PlayerPart.Position
+		local origin = p17
+		local direction = (NewHookPosition - origin).Unit
+		local distance = (NewHookPosition - origin).Magnitude
+		
+		return direction, distance
+
+    end
+
+    return oldGetAim(p17, ...)
+end
+
+
+UserInputService.InputEnded:Connect(function(input, gameProcessedEvent)
+	if gameProcessedEvent then
+		return
+	end
+
+	if Axis.Miscs.Guns.GunMacro.RevolverSettings.Enabled and Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind ~= '' then
+		if Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind == 'MouseButton1' or Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind == 'MouseButton2' then
+			if input.UserInputType == Enum.UserInputType[tostring(Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind)] then
+				if Axis.Miscs.Guns.GunMacro.RevolverSettings.KeybindMode == 'Hold' then
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding = false
+				end
+			end
+		else
+			if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind)] then
+				if Axis.Miscs.Guns.GunMacro.RevolverSettings.KeybindMode == 'Hold' then
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Holding = false
+				end
+			end
+		end
+	end
+end)
+
+for index:number, Player:Player in pairs(Users:GetPlayers()) do
+	if Player == L_Player then
+		continue
+	end
+
+	table.insert(Script.Players, Player)
+end
+
+Users.PlayerAdded:Connect(function(player)
+	table.insert(Script.Players, player)
+end)
+
+Users.PlayerRemoving:Connect(function(player)
+	local FindIndex = table.find(Script.Players, player)
+	table.remove(Script.Players, FindIndex)
+end)
+
+
+
+local NeverLose = loadstring(game:HttpGet("https://raw.githubusercontent.com/YTMFband/NeverLoseLibrary/refs/heads/main/lib"))() --require(script:WaitForChild('ModuleScript'));
+
+local Notification = NeverLose:CreateNotification();
+local Logging = NeverLose:CreateLogger();
+local Indicator = NeverLose:CreateIndicator();
+local window = NeverLose:CreateWindow({
+	Logo = 'rbxassetid://95306749214479',
+	Name = "Axis.gg",
+	Content = "YTMFband wants esex noe",
+	Size = NeverLose.Scales.Default,
+	ConfigFolder = "NeverLoseConfigs",
+	Enable3DRenderer = false,
+	Keybind = "Insert"
+});
+
+NeverLose.EnabledBlur = false
+NeverLose.BlurModuleParent = nil
+window:AddTabLabel('Main')
+
+
+local SilentAim = window:AddTab({
+	Icon = 'mouse-scrollwheel',
+	Name = "Silent-Aim"
+})
+
+local Aimbot = window:AddTab({
+	Icon = 'crosshairs',
+	Name = "Aimbot"
+})
+
+local Rage = window:AddTab({
+	Icon = 'flame',
+	Name = "Rage"
+})
+
+local Main = SilentAim:AddSection({
+	Name = "Silent Aim"
+})
+
+local Main2 = SilentAim:AddSection({
+	Name = "Target Aim"
+})
+
+local Utility = SilentAim:AddSection({
+	Name = "Utility"
+})
+
+local Visuals = SilentAim:AddSection({
+	Name = "Visuals",
+	Position = 'right'
+})
+
+local Dot = SilentAim:AddSection({
+	Name = "Dot Visual",
+	Position = 'right'
+})
+
+local Trace = SilentAim:AddSection({
+	Name = "Trace Visual",
+	Position = 'right'
+})
+
+
+local EnabledToggle = Main:AddLabel('Enabled')
+local Checks = Main:AddLabel('Checks')
+local HitChance = Main:AddLabel('Hit Chance')
+local HitboxPart = Main:AddLabel('Hitbox Part')
+
+local EnabledTA = Main2:AddLabel('Enabled')
+local ChecksTA = Main2:AddLabel('Checks')
+local HitChanceTA = Main2:AddLabel('Hit Chance')
+local HitboxPartTA = Main2:AddLabel('Hitbox Part')
+
+local ShowTrace = Trace:AddLabel('Show Trace')
+local TraceTransparency = Trace:AddLabel('Trace Transparency')
+local TraceSize = Trace:AddLabel('Trace Size')
+
+local ShowDot = Dot:AddLabel('Show Dot')
+local DotTransparency = Dot:AddLabel('Dot Transparency')
+local DotSize = Dot:AddLabel('Dot Size')
+
+local ShowFov = Visuals:AddLabel('Show Fov')
+local Filled = Visuals:AddLabel('Filled')
+local FovRadius = Visuals:AddLabel('Fov Radius')
+local FovThickness = Visuals:AddLabel('Fov Thickness')
+local OutlineRadius = Visuals:AddLabel('Outline Radius')
+local FovTransparency = Visuals:AddLabel('Fov Transparency')
+local OutlineTransparency = Visuals:AddLabel('Outline Transparency')
+local FilledTransparency = Visuals:AddLabel('Filled Transparency')
+
+local LookAtTarget = Utility:AddLabel('Look at Target')
+local TargetInformation = Utility:AddLabel('Target Info')
+
+EnabledToggle:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+		Axis.Main.SilentAim.Enabled = val
+	end
+})
+
+Checks:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+		Axis.Main.SilentAim.Checks.Enabled = val
+	end
+})
+
+HitChance:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+
+	end
+})
+
+LookAtTarget:AddToggle({
+	Default = false,
+	Flag = "LookAtTarget",
+	Callback = function(val)
+
+	end
+})
+
+
+TargetInformation:AddToggle({
+	Default = false,
+	Flag = "TargetInfo",
+	Callback = function(val)
+
+	end
+})
+
+HitboxPart:AddDropdown({
+	Default = {'Head'},
+	Multi = false,
+	Values = { 
+
+		"Head", "UpperTorso", "HumanoidRootPart", "LowerTorso",
+		"LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm",
+		"LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg",
+		"LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"
+
+	},
+	Flag = "AimMethod",
+	Callback = function()
+		
+	end
+})
+
+EnabledTA:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+		
+	end
+})
+
+ChecksTA:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+
+	end
+})
+
+HitChanceTA:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+
+	end
+})
+
+HitboxPartTA:AddDropdown({
+	Default = {'Head'},
+	Multi = false,
+	Values = { 
+
+		"Head", "UpperTorso", "HumanoidRootPart", "LowerTorso",
+		"LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm",
+		"LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg",
+		"LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"
+
+	},
+	Flag = "AimMethod",
+	Callback = function()
+		
+	end
+})
+
+FovRadius:AddSlider({
+	Min = 0,
+	Max = 1000,
+	Rounding = 0,
+	Default = 250,
+	Type = "Px",
+	Size = 85,
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.FovPx = val
+	end,
+	Flag = "fov",
+})
+
+FovThickness:AddSlider({
+	Min = 1,
+	Max = 5,
+	Rounding = 0,
+	Default = Axis.Main.SilentAim.Visuals.ThicknessPx,
+	Type = "Px",
+	Size = 85,
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.ThicknessPx = val
+	end,
+	Flag = "OutlineRadius",
+})
+
+OutlineRadius:AddSlider({
+	Min = 1,
+	Max = 10,
+	Rounding = 0,
+	Default = Axis.Main.SilentAim.Visuals.OutlinePx,
+	Type = "Px",
+	Size = 85,
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.OutlinePx = val
+	end,
+	Flag = "OutlineRadius",
+})
+
+TraceSize:AddSlider({
+	Min = 0,
+	Max = 5,
+	Rounding = 0,
+	Default = 2,
+	Type = "Px",
+	Size = 85,
+	Callback = function()
+		
+	end,
+	Flag = "TracerSize",
+})
+
+
+FovTransparency:AddSlider({
+	Min = 0,
+	Max = 1,
+	Rounding = 1,
+	Default = 1,
+	Type = "%",
+	Size = 85,
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.FovTransparency = val
+	end,
+	Flag = "fov",
+})
+
+OutlineTransparency:AddSlider({
+	Min = 0,
+	Max = 1,
+	Rounding = 1,
+	Default = 1,
+	Type = "%",
+	Size = 65,
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.OutlineTransparency = val
+	end,
+	Flag = "fov",
+})
+
+DotTransparency:AddSlider({
+	Min = 0,
+	Max = 1,
+	Rounding = 1,
+	Default = 1,
+	Type = "%",
+	Size = 85,
+	Callback = function()
+		
+	end,
+	Flag = "fov",
+})
+
+TraceTransparency:AddSlider({
+	Min = 0,
+	Max = 1,
+	Rounding = 1,
+	Default = 1,
+	Type = "%",
+	Size = 85,
+	Callback = function()
+		
+	end,
+	Flag = "fov",
+})
+
+FilledTransparency:AddSlider({
+	Min = 0,
+	Max = 1,
+	Rounding = 2,
+	Default = 0.25,
+	Type = "%",
+	Size = 85,
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.FilledTransparency = val
+	end,
+	Flag = "fov",
+})
+
+DotSize:AddSlider({
+	Min = 0,
+	Max = 25,
+	Rounding = 1,
+	Default = 7,
+	Type = "Px",
+	Size = 85,
+	Callback = function()
+		
+	end,
+	Flag = "DotSize",
+})
+
+ShowFov:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.ShowFov = val
+	end
+})
+
+ShowDot:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+		
+	end
+})
+
+
+ShowTrace:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+		
+	end
+})
+
+
+Filled:AddToggle({
+	Default = false,
+	Flag = "Enabled",
+	Callback = function(val)
+		Axis.Main.SilentAim.Visuals.Filled = val
+	end
+})
+
+local OpntionEnabled = EnabledToggle:AddOption()
+local OpntionChecks = Checks:AddOption()
+
+local OpntionHitChance = HitChance:AddOption()
+local OpntionHitPart = HitboxPart:AddOption()
+
+local OptionTA = EnabledTA:AddOption()
+local OptionCTA = ChecksTA:AddOption()
+
+local OptionHCTA = HitChanceTA:AddOption()
+local OptionHPTA = HitboxPartTA:AddOption()
+
+local OptionShowFov = ShowFov:AddOption()
+local OptionDot = ShowDot:AddOption()
+local OptionTrace = ShowTrace:AddOption()
+
+
+
+
+
+-->> ('Normal Checks ') <<--
+
+do
+
+	local KO = OpntionChecks:AddLabel("K.O Check")
+	local WallCheck = OpntionChecks:AddLabel("Wall Check")
+	local FriendCheck = OpntionChecks:AddLabel("Friend Check")
+	local CrewCheck = OpntionChecks:AddLabel("Crew Check")
+	local GrabbedCheck = OpntionChecks:AddLabel("Grabbed Check")
+	local Distance = OpntionChecks:AddLabel("Distance")
+
+	KO:AddToggle({
+		Default = false,
+		Flag = "KO",
+		Callback = function(val)
+			Axis.Main.SilentAim.Checks.KO = val
+		end
+	})
+
+	WallCheck:AddToggle({
+		Default = false,
+		Flag = "WallCheck",
+		Callback = function(val)
+			Axis.Main.SilentAim.Checks.WallCheck = val
+		end
+	})
+
+	FriendCheck:AddToggle({
+		Default = false,
+		Flag = "FriendCheck",
+		Callback = function(val)
+			Axis.Main.SilentAim.Checks.FriendCheck = val
+		end
+	})
+
+	CrewCheck:AddToggle({
+		Default = false,
+		Flag = "CrewCheck",
+		Callback = function(val)
+			Axis.Main.SilentAim.Checks.CrewCheck = val
+		end
+	})
+
+	GrabbedCheck:AddToggle({
+		Default = false,
+		Flag = "GrabbedCheck",
+		Callback = function(val)
+			Axis.Main.SilentAim.Checks.GrabbedCheck = val
+		end
+	})
+
+	Distance:AddToggle({
+		Default = false,
+		Flag = "GrabbedCheck",
+		Callback = function(val)
+			Axis.Main.SilentAim.Checks.Distance = val
+		end
+	})	
+
+	Distance:AddSlider({
+		Min = 0,
+		Max = 10000,
+		Rounding = 0,
+		Default = 250,
+		Type = "Studs",
+		Size = 100,
+		Callback = function(val)
+			Axis.Main.SilentAim.Checks.DistanceSize = val
+		end,
+		Flag = "fov",
+	})
+
+
+end
+
+-->> ('Target Aim Checks ') <<--
+do
+
+	local KOTA = OptionCTA:AddLabel("K.O Check")
+	local WallCheckTA = OptionCTA:AddLabel("Wall Check")
+	local FriendCheckTA = OptionCTA:AddLabel("Friend Check")
+	local CrewCheckTA = OptionCTA:AddLabel("Crew Check")
+	local GrabbedCheckTA = OptionCTA:AddLabel("Grabbed Check")
+	local DistanceTA = OptionCTA:AddLabel("Distance")
+
+
+	KOTA:AddToggle({
+	Default = false,
+	Flag = "KO",
+	Callback = function(val)
+
+	end
+	})
+
+	WallCheckTA:AddToggle({
+	Default = false,
+	Flag = "WallCheck",
+	Callback = function(val)
+
+	end
+	})
+
+	FriendCheckTA:AddToggle({
+	Default = false,
+	Flag = "FriendCheck",
+	Callback = function(val)
+
+	end
+	})
+
+	CrewCheckTA:AddToggle({
+	Default = false,
+	Flag = "CrewCheck",
+	Callback = function(val)
+
+	end
+	})
+
+	GrabbedCheckTA:AddToggle({
+	Default = false,
+	Flag = "GrabbedCheck",
+	Callback = function(val)
+
+	end
+	})
+
+
+
+	DistanceTA:AddToggle({
+	Default = false,
+	Flag = "GrabbedCheck",
+	Callback = function(val)
+
+	end
+	})
+
+	DistanceTA:AddSlider({
+	Min = 0,
+	Max = 10000,
+	Rounding = 0,
+	Default = 250,
+	Type = "Studs",
+	Size = 100,
+	Callback = function()
+		
+	end,
+	Flag = "fov",
+	})
+	
+end
+
+
+
+
+
+-->> ('Normal Hit Chance ') <<--
+do
+	local WalkingChance = OpntionHitChance:AddLabel("Walking Chance")
+	local JupmingChance = OpntionHitChance:AddLabel("Jupming Chance")
+
+	WalkingChance:AddSlider({
+		Min = 0,
+		Max = 100,
+		Rounding = 0,
+		Default = 100,
+		Type = "%",
+		Size = 85,
+		Callback = function()
+			
+		end,
+		Flag = "fov",
+	})
+
+	JupmingChance:AddSlider({
+		Min = 0,
+		Max = 100,
+		Rounding = 0,
+		Default = 100,
+		Type = "%",
+		Size = 85,
+		Callback = function()
+			
+		end,
+		Flag = "fov",
+	})
+end
+
+-->> ('Target Aim Hit Chance ') <<--
+
+do
+
+	local WalkingChanceTA = OptionHCTA:AddLabel("Walking Chance")
+	local JupmingChanceTA = OptionHCTA:AddLabel("Jupming Chance")
+	
+	WalkingChanceTA:AddSlider({
+		Min = 0,
+		Max = 100,
+		Rounding = 0,
+		Default = 100,
+		Type = "%",
+		Size = 85,
+		Callback = function()
+			
+		end,
+		Flag = "fov",
+	})
+
+	JupmingChanceTA:AddSlider({
+		Min = 0,
+		Max = 100,
+		Rounding = 0,
+		Default = 100,
+		Type = "%",
+		Size = 85,
+		Callback = function()
+			
+		end,
+		Flag = "fov",
+	})
+end
+
+
+
+
+-->> ('Normal NearestPart') <<--
+do
+
+	local NearestPart = OpntionHitPart:AddLabel("NearestPart")
+	local NearestCloset = OpntionHitPart:AddLabel("Closet To")
+	local NearestHitboxPart = OpntionHitPart:AddLabel("NearestHitboxPart")
+
+
+	NearestPart:AddToggle({
+		Default = false,
+		Flag = "NearestPart",
+		Callback = function(val)
+
+		end
+	})
+
+	NearestCloset:AddDropdown({
+		Default = {'Mouse'},
+		Multi = false,
+		Values = {'Mouse', 'Center'},
+		Flag = "ClosetTo",
+		Callback = function()
+			
+		end
+	})
+
+
+	NearestHitboxPart:AddDropdown({
+		Default = {
+
+			"Head", "UpperTorso", "HumanoidRootPart", "LowerTorso",
+			"LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm",
+			"LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg",
+			"LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"
+
+		},
+		Multi = true,
+		Values = { 
+
+			"Head", "UpperTorso", "HumanoidRootPart", "LowerTorso",
+			"LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm",
+			"LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg",
+			"LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"
+
+		},
+		Flag = "NearestPartDropDown",
+		Callback = function()
+			
+		end
+	})
+end
+
+-->> ('Target Aim NearestPart') <<--
+do
+
+	local NearestPartTA = OptionHPTA:AddLabel("NearestPart")
+	local NearestClosetTA = OptionHPTA:AddLabel("Closet To")
+	local NearestHitboxPartTA = OptionHPTA:AddLabel("NearestHitboxPart")
+
+
+	NearestPartTA:AddToggle({
+		Default = false,
+		Flag = "NearestPart",
+		Callback = function(val)
+
+		end
+	})
+
+	NearestClosetTA:AddDropdown({
+		Default = {'Mouse'},
+		Multi = false,
+		Values = {'Mouse', 'Center'},
+		Flag = "ClosetTo",
+		Callback = function()
+			
+		end
+	})
+
+
+	NearestHitboxPartTA:AddDropdown({
+		Default = {
+
+			"Head", "UpperTorso", "HumanoidRootPart", "LowerTorso",
+			"LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm",
+			"LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg",
+			"LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"
+
+		},
+		Multi = true,
+		Values = { 
+
+			"Head", "UpperTorso", "HumanoidRootPart", "LowerTorso",
+			"LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm",
+			"LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg",
+			"LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"
+
+		},
+		Flag = "NearestPartDropDown",
+		Callback = function()
+			
+		end
+	})
+end
+
+-->> ('Visuals') <<--
+do
+	local Fovlab = OptionShowFov:AddLabel("Fov Color")
+	local Fovoutlab = OptionShowFov:AddLabel("Outline Color")
+	local Smoothness = OptionShowFov:AddLabel("Smoothness")
+	local FovOnTarget = OptionShowFov:AddLabel("Fov On Target")
+	local Pulse = OptionShowFov:AddLabel("Pulse")
+	local PulseSpeed = OptionShowFov:AddLabel("Pulse Speed")
+	local PulseAmmout = OptionShowFov:AddLabel("Pulse Ammout")
+
+	Pulse:AddToggle({
+		Default = false,
+		Flag = "Enabled",
+		Callback = function(val)
+
+		end
+	})
+
+	FovOnTarget:AddToggle({
+		Default = false,
+		Flag = "Enabled",
+		Callback = function(val)
+			Axis.Main.SilentAim.Visuals.FovOnTarget = val
+		end
+	})
+
+	Fovlab:AddColorPicker({
+		Default = Color3.fromRGB(255, 255, 255),
+		Flag = "FovColor",
+		Callback = function(val)
+
+		end
+	})
+
+	Fovoutlab:AddColorPicker({
+		Default = Color3.fromRGB(255, 255, 255),
+		Flag = "OutLineColor",
+		Callback = function(val)
+
+		end
+	})
+
+	Smoothness:AddSlider({
+		Min = 0,
+		Max = 100,
+		Rounding = 0,
+		Default = Axis.Main.SilentAim.Visuals.Smooth,
+		Type = "%",
+		Size = 85,
+		Callback = function(val)
+			Axis.Main.SilentAim.Visuals.Smooth = val
+		end,
+		Flag = "SmoothnessSlider",
+	})
+
+	PulseSpeed:AddSlider({
+		Min = 0,
+		Max = 15,
+		Rounding = 0,
+		Default = 5,
+		Type = "%",
+		Size = 85,
+		Callback = function()
+			
+		end,
+		Flag = "PulseSpeed",
+	})
+
+	PulseAmmout:AddSlider({
+		Min = 0,
+		Max = 45,
+		Rounding = 0,
+		Default = 10,
+		Type = "Px",
+		Size = 85,
+		Callback = function()
+			
+		end,
+		Flag = "PulseAmmout",
+	})
+end
+
+-->> ('Visuals Dot') <<--
+do
+	local DotColor = OptionDot:AddLabel("Dot Color")
+	local OutLineColor = OptionDot:AddLabel("Outline Color")
+	local OutLineSize = OptionDot:AddLabel("Outline Size")
+	local OutlineTransparency = OptionDot:AddLabel("Outline Transparency")
+
+
+	DotColor:AddColorPicker({
+		Default = Color3.fromRGB(255, 255, 255),
+		Flag = "DotColor",
+		Callback = function(val)
+
+		end
+	})
+
+	OutLineColor:AddColorPicker({
+		Default = Color3.fromRGB(255, 255, 255),
+		Flag = "OutlineDotColor",
+		Callback = function(val)
+
+		end
+	})
+
+	OutLineSize:AddSlider({
+		Min = 0,
+		Max = 5,
+		Rounding = 0,
+		Default = 2,
+		Type = "Px",
+		Size = 85,
+		Callback = function()
+			
+		end,
+		Flag = "Outlinedotsize",
+	})
+
+	OutlineTransparency:AddSlider({
+		Min = 0,
+		Max = 1,
+		Rounding = 1,
+		Default = 1,
+		Type = "%",
+		Size = 65,
+		Callback = function()
+			
+		end,
+		Flag = "OutlinedotTransparency",
+	})
+	
+
+end
+
+
+
+
+
+
+OpntionEnabled:AddLabel("Keybind"):AddKeybind({
+	Default = 'NULL',
+	Callback = function(v)
+
+	end,
+})
+
+
+OpntionEnabled:AddLabel('Aim Method'):AddDropdown({
+	Default = {'Hook Module'},
+	Multi = false,
+	Values = {'Hook Module', 'Hook Mouse', 'Hook Raycast'},
+	Flag = "AimMethod",
+	Callback = function()
+		
+	end
+})
+
+
+
+OpntionEnabled:AddLabel('Closet To'):AddDropdown({
+	Default = {'Mouse'},
+	Multi = false,
+	Values = {'Mouse', 'Center'},
+	Flag = "Closet To",
+	Callback = function(val)
+		Axis.Main.SilentAim.ClosetTo = val
+	end
+})
+
+OptionTA:AddLabel("Keybind Disable"):AddKeybind({
+	Default = 'NULL',
+	Callback = function(v)
+
+	end,
+})
+
+OptionTA:AddLabel("Keybind Lock"):AddKeybind({
+	Default = 'NULL',
+	Callback = function(v)
+
+	end,
+})
+
+OptionTA:AddLabel('Selection Method'):AddDropdown({
+	Default = {'Camera'},
+	Multi = false,
+	Values = {'Camera', 'Mouse'},
+	Flag = "AimMethod",
+	Callback = function()
+		
+	end
+})
+
+OptionTA:AddLabel('Closet To'):AddDropdown({
+	Default = {'Mouse'},
+	Multi = false,
+	Values = {'Mouse', 'Center'},
+	Flag = "Closet To",
+	Callback = function()
+		
+	end
+})
+
+window:AddTabLabel('Visuals')
+
+local Esp = window:AddTab({
+	Icon = 'eye',
+	Name = "Esp"
+})
+
+local Guns = window:AddTab({
+	Icon = 'globe-detailed',
+	Name = "World"
+})
+
+
+
+
+
+
+
+
+
+
+window:AddTabLabel('Miscs')
+
+local Utility = window:AddTab({
+	Icon = 'backpack',
+	Name = "Utility"
+})
+
+local Guns = window:AddTab({
+	Icon = 'bullet-flying',
+	Name = "Guns"
+})
+
+
+
+do
+	local GunCooldown = Guns:AddSection({
+		Name = "Cooldown Manipulation"
+	})
+
+	local Revolver = GunCooldown:AddLabel('[Revolver]')
+	local DoubleBarrelSG = GunCooldown:AddLabel('[Double-Barrel SG]')
+	local TacticalShotgun = GunCooldown:AddLabel('[TacticalShotgun]')
+
+	Revolver:AddToggle({
+		Default = false,
+		Flag = "RevolverCooldown",
+		Callback = function(val)
+
+		end
+	})
+
+	DoubleBarrelSG:AddToggle({
+		Default = false,
+		Flag = "DoubleBarrelSGCooldown",
+		Callback = function(val)
+
+		end
+	})
+
+	TacticalShotgun:AddToggle({
+		Default = false,
+		Flag = "TacticalShotgunCooldown",
+		Callback = function(val)
+
+		end
+	})
+
+	local OptionRevolver = Revolver:AddOption()
+	local OptionDoubleBarrelSG = DoubleBarrelSG:AddOption()
+	local OptionTacticalShotgun = TacticalShotgun:AddOption()
+
+end
+
+do
+	local GunCooldown = Guns:AddSection({
+		Name = "Range Manipulation"
+	})
+
+	local Revolver = GunCooldown:AddLabel('[Revolver]')
+	local DoubleBarrelSG = GunCooldown:AddLabel('[Double-Barrel SG]')
+	local TacticalShotgun = GunCooldown:AddLabel('[TacticalShotgun]')
+
+	Revolver:AddToggle({
+		Default = false,
+		Flag = "RevolverRange",
+		Callback = function(val)
+
+		end
+	})
+
+	DoubleBarrelSG:AddToggle({
+		Default = false,
+		Flag = "DoubleBarrelSGRange",
+		Callback = function(val)
+
+		end
+	})
+
+	TacticalShotgun:AddToggle({
+		Default = false,
+		Flag = "TacticalShotgunRange",
+		Callback = function(val)
+
+		end
+	})
+
+	local OptionRevolver = Revolver:AddOption()
+	local OptionDoubleBarrelSG = DoubleBarrelSG:AddOption()
+	local OptionTacticalShotgun = TacticalShotgun:AddOption()
+
+
+
+end
+
+do
+	local GunCooldown = Guns:AddSection({
+		Name = "Gun Macro",
+		Position = 'right'
+	})
+
+	local Enabled = GunCooldown:AddLabel('Enabled')
+	local Revolver = GunCooldown:AddLabel('[Revolver Settings]')
+	local GunOrder = GunCooldown:AddLabel('Gun Order')
+
+	Enabled:AddToggle({
+		Default = false,
+		Flag = "GunMacroEnabled",
+		Callback = function(val)
+			Axis.Miscs.Guns.GunMacro.Enabled = val
+		end
+	})
+
+	Revolver:AddToggle({
+		Default = false,
+		Flag = "GunMacroEnabled",
+		Callback = function(val)
+			Axis.Miscs.Guns.GunMacro.RevolverSettings.Enabled = val
+		end
+	})
+
+	GunOrder:AddDropdown({
+		Default = {''},
+		Multi = true,
+		Values = {'[Double-Barrel SG]', '[TacticalShotgun]'},
+		Flag = "AutoFireModeRev",
+		Callback = function(Value)
+			Axis.Miscs.Guns.GunMacro.GunOrder ={}
+			for i,v in next, Value do
+				Axis.Miscs.Guns.GunMacro.GunOrder[i] = v
+			end
+		end
+	})
+
+	local OptionEnabled = Enabled:AddOption()
+	local OptionRev = Revolver:AddOption()
+
+	local KeybindEnabled = OptionEnabled:AddLabel('Keybind')
+	local AutoFire = OptionEnabled:AddLabel('Auto Fire')
+	local AmmoCheck = OptionEnabled:AddLabel('Ammo Check')
+	local CooldownEnabled = OptionEnabled:AddLabel('Cooldown')
+	local LoopTime = OptionEnabled:AddLabel('Loop Time')
+	local AutoFireMode = OptionEnabled:AddLabel('Auto Fire Mode')
+
+
+	AutoFire:AddToggle({
+		Default = false,
+		Flag = "GunMacroEnabled",
+		Callback = function(val)
+			Axis.Miscs.Guns.GunMacro.AutoFire = val
+		end
+	})
+
+	AmmoCheck:AddToggle({
+		Default = false,
+		Flag = "GunMacroEnabled",
+		Callback = function(val)
+		Axis.Miscs.Guns.GunMacro.AmmoCheck = val
+		end
+	})
+
+
+	KeybindEnabled:AddKeybind({
+		Default = 'NULL',
+		Callback = function(v)
+			Axis.Miscs.Guns.GunMacro.Keybind = v
+		end,
+	})
+
+	CooldownEnabled:AddSlider({
+		Min = 0,
+		Max = 1,
+		Rounding = 2,
+		Default = 0.05,
+		Type = "Sec",
+		Size = 85,
+		Callback = function(val)
+			Axis.Miscs.Guns.GunMacro.Cooldown = val
+		end,
+		Flag = "Outlinedotsize",
+	})
+
+	AutoFireMode:AddDropdown({
+		Default = {'Normal'},
+		Multi = false,
+		Values = {'Normal', 'TriggerBot'},
+		Flag = "AutoFireModeRev",
+		Callback = function(Value)
+			Axis.Miscs.Guns.GunMacro.AutoFireMode = Value 
+		end
+	})
+
+
+	local AutoFireRev = OptionRev:AddLabel('Auto Fire')
+	local AutoFireKeybind = OptionRev:AddLabel('Auto Fire Keybind')
+	local AutoFireKeybindMode = OptionRev:AddLabel('Keybind Mode')
+	local AutoFireMode = OptionRev:AddLabel('Auto Fire Mode')
+
+	AutoFireKeybind:AddKeybind({
+		Default = 'NULL',
+		Callback = function(v)
+			if v == 'M1B' then
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind = 'MouseButton1'
+			elseif v == 'M2B' then
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind = 'MouseButton2'
+			else
+				Axis.Miscs.Guns.GunMacro.RevolverSettings.Keybind = v
+			end
+		end,
+	})
+
+	AutoFireKeybindMode:AddDropdown({
+		Default = {'Hold'},
+		Multi = false,
+		Values = {'Hold', 'Toggled'},
+		Flag = "AutoFireModeRev",
+		Callback = function(Val)
+			Axis.Miscs.Guns.GunMacro.RevolverSettings.KeybindMode = Val
+		end
+	})
+
+	AutoFireRev:AddToggle({
+		Default = false,
+		Flag = "GunMacroRevAutoShoot",
+		Callback = function(val)
+			Axis.Miscs.Guns.GunMacro.RevolverSettings.AutoFire = val
+		end
+	})
+
+	AutoFireMode:AddDropdown({
+		Default = {'Normal'},
+		Multi = false,
+		Values = {'Normal', 'TriggerBot'},
+		Flag = "AutoFireModeRev",
+		Callback = function(val)
+			Axis.Miscs.Guns.GunMacro.RevolverSettings.AutoFireMode = val
+		end
+	})
+
+
+
+end
+
+
+
+
+window.UserSettings:AddLabel("Menu Keybind"):AddKeybind({
+	Default = 'Insert',
+	Callback = function(v)
+		window.Keybind = v;
+		
+		Logging.new("ps4-touchpad",'Changed ui keybind to '..tostring(v),5)
+	end,
+})
+
+window.UserSettings:AddLabel('Menu Scale'):AddDropdown({
+	Default = "Default",
+	Values = {"Default",'Large','Mobile','Small'},
+	Callback = function(v)
+		window:SetSize(NeverLose.Scales[v]);
+		
+		Logging.new("crop",'Changed ui size to '..tostring(v),5)
+	end,
+})
+
+window.UserSettings:AddButton({
+	Icon = 'discord',
+	Name = 'Discord',
+	Callback = function()
+		print('invite')
+		
+		Logging.new("discord",'Copied discord invite link',5)
+	end,
+})
+
