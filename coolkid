@@ -9,7 +9,11 @@ if not ReplicatedStorage:FindFirstChild('Modules') or not ReplicatedStorage:Find
 	Users.LocalPlayer:Kick('Game not supportable check the list before use it again')
 end
 
+if not ReplicatedStorage:FindFirstChild('MainRemotes') or not ReplicatedStorage:FindFirstChild('MainRemotes'):FindFirstChild('MainRemoteEvent') then
+	Users.LocalPlayer:Kick('MainEvent Not Founded Check the list before use it again')
+end
 
+local MainRemoteEvent = ReplicatedStorage:FindFirstChild('MainRemotes'):FindFirstChild('MainRemoteEvent')
 local GunHandler = require(ReplicatedStorage.Modules.GunHandler)
 
 local L_Player = Users.LocalPlayer;
@@ -20,6 +24,11 @@ local MouseSmooth = UserInputService:GetMouseLocation();
 
 local Last__chance_tick = 0;
 local last__chance__hit = false
+local GunSwitchDebounce = false;
+
+local Yungblud:Animation = Instance.new("Animation")
+Yungblud.AnimationId = "http://www.roblox.com/asset/?id=15609995579"
+
 
 
 do
@@ -278,6 +287,27 @@ local Axis = {
 
 
 	Miscs = {
+
+		Utility = {
+			Movement = {
+				Emoties = {
+					AutoEquip = false,
+					Enabled = false;
+					Keybind = 'L',
+					EquipItem = '',
+					Emote = ''
+				},
+			}
+
+
+
+
+
+
+
+		},
+
+
 		Guns = {
 
 			GunMacro = {
@@ -1115,15 +1145,17 @@ do
 
 end
 
+local ConnectionEmote
+local Track 
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	if gameProcessedEvent then return end
 	if Axis.Miscs.Guns.GunMacro.Enabled and Axis.Miscs.Guns.GunMacro.Keybind ~= '' then
-		if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Guns.GunMacro.Keybind)]  then
+		if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Guns.GunMacro.Keybind)] and GunSwitchDebounce == false  then
 			if not L_Player.Character then
 				return
 			end
-
+			GunSwitchDebounce = true
 			for Toolname, bcb in next, Axis.Miscs.Guns.GunMacro.GunOrder do
 				local EquippedTool = L_Player.Character:FindFirstChild(Toolname) or L_Player.Backpack:FindFirstChild(Toolname)
 				if Axis.Miscs.Guns.GunMacro.AmmoCheck then
@@ -1135,7 +1167,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 
 				local Humanoid:Humanoid = L_Player.Character:FindFirstChild('Humanoid')
 				if EquippedTool then
-
+					
 					if EquippedTool.Parent == L_Player.Backpack then
 						Humanoid:EquipTool(EquippedTool)
 						task.wait()
@@ -1154,14 +1186,12 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 							end
 						end
 					end
-
-					RunService.RenderStepped:Wait()
-					Humanoid:UnequipTools()
+					task.wait(Axis.Miscs.Guns.GunMacro.Cooldown)
 				end
 
-
-				task.wait(Axis.Miscs.Guns.GunMacro.Cooldown)
 			end
+
+			GunSwitchDebounce = false
 		end
 	end
 
@@ -1186,7 +1216,60 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	end
 
 
+	if Axis.Miscs.Utility.Movement.Emoties.Enabled and Axis.Miscs.Utility.Movement.Emoties.Keybind ~= '' then
+		if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Utility.Movement.Emoties.Keybind)] then
 
+			if not L_Player.Character then
+				return
+			end
+
+			if not L_Player.Character:FindFirstChild('Humanoid') then
+				return
+			end
+
+			if ConnectionEmote then
+				ConnectionEmote:Disconnect()
+			end
+
+			if Track then
+				Track:Stop()
+			end
+			
+			local Hum = L_Player.Character:FindFirstChild('Humanoid')
+			local Animator:Animator = Hum:FindFirstChild('Animator')
+
+
+			if Axis.Miscs.Utility.Movement.Emoties.Emote == 'Greet' then
+				MainRemoteEvent:FireServer('AnimationPack', 'Greet')
+			elseif Axis.Miscs.Utility.Movement.Emoties.Emote == 'Yungblud Happier Jump' then
+
+				Track = Animator:LoadAnimation(Yungblud)
+				Track.Priority = Enum.AnimationPriority.Idle
+
+				ConnectionEmote = Hum:GetPropertyChangedSignal('MoveDirection'):Connect(function()
+					ConnectionEmote:Disconnect()
+					Track:Stop()
+				end)
+
+				Track:Play()
+			end
+			if Axis.Miscs.Utility.Movement.Emoties.AutoEquip then
+				local GunName = '['.. Axis.Miscs.Utility.Movement.Emoties.EquipItem..']'
+				local FoundTool = L_Player.Backpack:FindFirstChild(GunName) or L_Player.Character:FindFirstChild(GunName)
+				if FoundTool then
+					if FoundTool.Parent == L_Player.Backpack then
+						Hum:EquipTool(FoundTool)
+						task.wait(0.02)
+						Hum:UnequipTools()
+					end
+					
+
+
+
+				end
+			end
+		end
+	end 
 end)
 
 
@@ -1316,7 +1399,7 @@ local Logging = NeverLose:CreateLogger();
 local Indicator = NeverLose:CreateIndicator();
 local window = NeverLose:CreateWindow({
 	Logo = 'rbxassetid://95306749214479',
-	Name = "Axis.gg",
+	Name = "Snowfall.cc",
 	Content = "YTMFband Cool",
 	Size = NeverLose.Scales.Default,
 	ConfigFolder = "NeverLoseConfigs",
@@ -2028,6 +2111,7 @@ do
 		Callback = function(val)
 			Axis.Main.SilentAim.NearestPart.Parts = {}
 			for index, value in next, val do
+				print(index)
             	table.insert(Axis.Main.SilentAim.NearestPart.Parts, index)
         	end
 		end
@@ -2361,7 +2445,7 @@ do
 	local CFrameEnabled = GunCooldown:AddLabel('CFrame Walk')
 	local FlyEnabled = GunCooldown:AddLabel('Fly CFrame')
 	local Noclip = GunCooldown:AddLabel('Noclip')
-	local Emote = GunCooldown:AddLabel('Emote')
+	local Emote = GunCooldown:AddLabel('Macro Emote')
 
 
 	CFrameEnabled:AddToggle({
@@ -2385,7 +2469,7 @@ do
 		Default = false,
 		Flag = "CFrameSpeed",
 		Callback = function(val)
-
+			Axis.Miscs.Utility.Movement.Emoties.Enabled = val
 		end
 	})
 
@@ -2404,34 +2488,73 @@ do
 
 
 	local Keybind = EmoteOption:AddLabel('Keybind')
-	local List = EmoteOption:AddLabel('List')
+	local Cooldown = EmoteOption:AddLabel('Cooldown')
+	local AutoEquip = EmoteOption:AddLabel('Auto Equip')
+	local EquipItem = EmoteOption:AddLabel('Equip Item')
+	local List = EmoteOption:AddLabel('Emote')
 
 	Keybind:AddKeybind({
 		Default = 'L',
 		Callback = function(v)
+			Axis.Miscs.Utility.Movement.Emoties.Keybind = v
+		end,
+	})
+	Cooldown:AddSlider({
+		Min = 0,
+		Max = 1,
+		Rounding = 2,
+		Default = 0.5,
+		Type = "",
+		Size = 100,
+		Callback = function(val)
 
 		end,
+		Flag = "Outlinedotsize",
 	})
 
 	List:AddDropdown({
 		Default = {''},
 		Multi = false,
-		Values = {'Greet', 'Toggled'},
+		Values = {'Greet', 'Yungblud Happier Jump'},
 		Flag = "AutoFireModeRev",
 		Callback = function(Val)
+			Axis.Miscs.Utility.Movement.Emoties.Emote = Val
+		end
+	})
 
+	AutoEquip:AddToggle({
+		Default = false,
+		Flag = "CFrameSpeed",
+		Callback = function(val)
+			Axis.Miscs.Utility.Movement.Emoties.AutoEquip = val
+		end
+	})
+
+	EquipItem:AddDropdown({
+		Default = {''},
+		Multi = false,
+		Values = {'Revolver', 'Knife', 'TacticalShotgun', 'Double-Barrel SG'},
+		Flag = "AutoFireModeRev",
+		Callback = function(Val)
+			Axis.Miscs.Utility.Movement.Emoties.EquipItem = Val
 		end
 	})
 end
 
 do
+
 	local Humanoid = Utility:AddSection({
 		Name = "Humanoid"
 	})
 
-	local AutoStomp = Humanoid:AddLabel('WalkSpeed')
+
+	local Walkspeed = Humanoid:AddLabel('WalkSpeed')
 	local JumpPower = Humanoid:AddLabel('JumpPower')
 	local AntiVoid = Humanoid:AddLabel('Anti void')
+	local ReduceWalk = Humanoid:AddLabel('ReduceWalk')
+
+
+
 
 
 
@@ -2747,10 +2870,10 @@ do
 
 	CooldownEnabled:AddSlider({
 		Min = 0,
-		Max = 1,
+		Max = 0.2,
 		Rounding = 2,
 		Default = 0.05,
-		Type = "Sec",
+		Type = "ms",
 		Size = 85,
 		Callback = function(val)
 			Axis.Miscs.Guns.GunMacro.Cooldown = val
