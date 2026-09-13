@@ -3,6 +3,7 @@ local Users:Players = game:GetService('Players');
 local ReplicatedStorage = game:GetService('ReplicatedStorage');
 local RunService:RunService = game:GetService('RunService')
 local UserInputService:UserInputService = game:GetService('UserInputService');
+local Workspace = game:GetService('Workspace')
 local Camera = workspace.CurrentCamera;
 
 if not ReplicatedStorage:FindFirstChild('Modules') or not ReplicatedStorage:FindFirstChild('Modules'):FindFirstChild('GunHandler') then
@@ -17,6 +18,13 @@ local MainRemoteEvent = ReplicatedStorage:FindFirstChild('MainRemotes'):FindFirs
 local GunHandler = require(ReplicatedStorage.Modules.GunHandler)
 
 local L_Player = Users.LocalPlayer;
+local L_Humanoid
+local L_Backpack
+local L_Character
+local L_Animator
+
+
+
 local SwitchGunsDebounce = false;
 local SwitchGunsTotalShoots = 0;
 local LastTickUpdateSilentAim = 0;
@@ -25,9 +33,15 @@ local MouseSmooth = UserInputService:GetMouseLocation();
 local Last__chance_tick = 0;
 local last__chance__hit = false
 local GunSwitchDebounce = false;
+local StompDebounce = false;
+
+
+
+
 
 local Yungblud:Animation = Instance.new("Animation")
 Yungblud.AnimationId = "http://www.roblox.com/asset/?id=15609995579"
+
 
 
 
@@ -119,7 +133,12 @@ local Hook_Variables = {
 local signal = {};
 local connections = {};
 local hearthbeat = {};
+local Tools = {};
 
+
+local WeaponNameList = {
+    '[Double-Barrel SG]', '[Revolver]', '[TacticalShotgun]', '[Knife]'
+}
 
 local Creat__Con = function(signal, callback)
     local connection = signal:Connect(callback)
@@ -282,7 +301,9 @@ local Axis = {
 
 
 
-		}
+		},
+
+
 	},
 
 
@@ -369,6 +390,7 @@ local Script = {
 	Plr_Data = {
 		Shooting = false;
 		Last_tick_shoot = 0;
+
 
 
 	},
@@ -637,6 +659,80 @@ RunService.PostSimulation:Connect(function(deltaTime)
 end)
 
 
+
+do
+
+	local StompAnimation = ReplicatedStorage:FindFirstChild('ClientAnimations'):FindFirstChild('Stomp')
+	local ParamsRay = RaycastParams.new();
+	ParamsRay.FilterType = Enum.RaycastFilterType.Exclude
+	ParamsRay.FilterDescendantsInstances = {}
+
+	local Auto__Stomp = function()
+		
+		if not L_Player.Character or not StompAnimation then
+			return
+		end
+
+		local Character = L_Player.Character
+		local HumanoidPlr = Character:FindFirstChild('Humanoid')
+		local LowerTorso = Character:FindFirstChild('LowerTorso')
+		local UpperTorso = Character:FindFirstChild('UpperTorso')
+
+		if not (HumanoidPlr and LowerTorso and UpperTorso) then
+			return
+		end
+
+		ParamsRay.FilterDescendantsInstances = {Character}
+
+		local RayResult = workspace:Raycast(
+			LowerTorso.Position, 
+			Vector3.new(0, -UpperTorso.Size.Y * 4.5, 0), 
+			ParamsRay
+		)
+
+		if not RayResult or not RayResult.Instance or not RayResult.Instance.Parent then
+			return
+		end
+
+		local hitParent = RayResult.Instance.Parent
+		local Humanoid = hitParent:FindFirstChild('Humanoid') 
+			or (hitParent.Parent and hitParent.Parent:FindFirstChild('Humanoid')) 
+			or (hitParent.Parent and hitParent.Parent.Parent and hitParent.Parent.Parent:FindFirstChild('Humanoid'))
+
+
+		if not Humanoid then
+			return
+		end
+
+		local TargetCharacter = Humanoid.Parent
+		local BodyEffects = TargetCharacter:FindFirstChild('BodyEffects')
+
+		if not BodyEffects or not BodyEffects:FindFirstChild('K.O') then
+			return
+		end
+
+		if BodyEffects['K.O'].Value == false then
+			return
+		end
+
+		if StompDebounce == true then
+			return
+		end
+
+		StompDebounce = true
+		local Track = HumanoidPlr.Animator:LoadAnimation(StompAnimation)
+		Track:Play(0.1, 1, 1.5)
+		task.wait(0.45)
+		MainRemoteEvent:FireServer('Stomp')
+		task.wait(1.25)
+		StompDebounce = false
+	end
+
+
+
+	--hearthbeat[#hearthbeat+1] = Auto__Stomp
+end
+
 do
 
 	local Auto_BuyFunc = function()
@@ -651,9 +747,14 @@ do
 
 
 
+
+
 	end
 
+
 	local UpdateVlx = function()
+
+
 
 
 	end
@@ -942,6 +1043,11 @@ do
 	function CharacterAdded(char : Model) 
 		char:WaitForChild('Humanoid')
 
+		L_Humanoid = char:FindFirstChild('Humanoid')
+		L_Backpack = L_Player.Backpack
+		L_Character = char
+		L_Animator = L_Humanoid:FindFirstChild('Animator')
+
 		if Toolconnection1 then
 			Toolconnection1:Disconnect()
 		end
@@ -949,6 +1055,16 @@ do
 			Toolconnection2:Disconnect()
 		end
 
+
+		task.defer(function()
+			for i=1, #WeaponNameList do
+				local Weapon = WeaponNameList[i]
+				local Tool = L_Backpack:WaitForChild(Weapon, 1) or char:WaitForChild(Weapon, 1)
+				if Tool then
+					Tools[Tool.Name] = Tool
+				end
+			end
+		end)
 
 		Toolconnection1 = char.ChildAdded:Connect(function(child)
             local IsGun = if child.Name == '[Double-Barrel SG]'or child.Name== '[Revolver]'or child.Name== '[TacticalShotgun]' then true else false
@@ -1139,10 +1255,6 @@ do
 	end
 
 	L_Player.CharacterAdded:Connect(CharacterAdded)
-
-
-
-
 end
 
 local ConnectionEmote
@@ -1152,46 +1264,46 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	if gameProcessedEvent then return end
 	if Axis.Miscs.Guns.GunMacro.Enabled and Axis.Miscs.Guns.GunMacro.Keybind ~= '' then
 		if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Guns.GunMacro.Keybind)] and GunSwitchDebounce == false  then
-			if not L_Player.Character then
-				return
-			end
+			RunService.RenderStepped:Wait()
+
 			GunSwitchDebounce = true
-			for Toolname, bcb in next, Axis.Miscs.Guns.GunMacro.GunOrder do
-				local EquippedTool = L_Player.Character:FindFirstChild(Toolname) or L_Player.Backpack:FindFirstChild(Toolname)
-				if Axis.Miscs.Guns.GunMacro.AmmoCheck then
-					if EquippedTool:FindFirstChild('Ammo').Value == 0 then
-						return
+
+			task.spawn(function()
+				for Toolname, bcb in next, Axis.Miscs.Guns.GunMacro.GunOrder do
+					local EquippedTool = Tools[tostring(Toolname)]
+					if Axis.Miscs.Guns.GunMacro.AmmoCheck then
+						if EquippedTool:FindFirstChild('Ammo').Value == 0 then
+							continue
+						end
+
 					end
 
-				end
+					if EquippedTool then
+						if EquippedTool.Parent == L_Backpack then
+							L_Humanoid:EquipTool(EquippedTool)
+							task.wait()
+						end
 
-				local Humanoid:Humanoid = L_Player.Character:FindFirstChild('Humanoid')
-				if EquippedTool then
-					
-					if EquippedTool.Parent == L_Player.Backpack then
-						Humanoid:EquipTool(EquippedTool)
-						task.wait()
-					end
-
-					if Axis.Miscs.Guns.GunMacro.AutoFire then
-						if Axis.Miscs.Guns.GunMacro.AutoFireMode == 'Normal' then
-							EquippedTool:Activate()
-						elseif  Axis.Miscs.Guns.GunMacro.AutoFireMode == 'TriggerBot' then
-							local mouse = UserInputService:GetMouseLocation()
-							local Raycast = Camera:ViewportPointToRay(mouse.X, mouse.Y);
-							rayParams.FilterDescendantsInstances = {L_Player.Character}
-							local RaycastResult = workspace:Raycast(Raycast.Origin, Raycast.Direction * 500, rayParams);
-							if RaycastResult and RaycastResult.Instance and RaycastResult.Instance:IsDescendantOf(game.workspace.Players) then
+						if Axis.Miscs.Guns.GunMacro.AutoFire then
+							if Axis.Miscs.Guns.GunMacro.AutoFireMode == 'Normal' then
 								EquippedTool:Activate()
+							elseif  Axis.Miscs.Guns.GunMacro.AutoFireMode == 'TriggerBot' then
+								local mouse = UserInputService:GetMouseLocation()
+								local Raycast = Camera:ViewportPointToRay(mouse.X, mouse.Y);
+								rayParams.FilterDescendantsInstances = {L_Player.Character}
+								local RaycastResult = workspace:Raycast(Raycast.Origin, Raycast.Direction * 500, rayParams);
+								if RaycastResult and RaycastResult.Instance and RaycastResult.Instance:IsDescendantOf(game.workspace.Players) then
+									EquippedTool:Activate()
+								end
 							end
 						end
+						task.wait(Axis.Miscs.Guns.GunMacro.Cooldown)
 					end
-					task.wait(Axis.Miscs.Guns.GunMacro.Cooldown)
+
 				end
 
-			end
-
-			GunSwitchDebounce = false
+				GunSwitchDebounce = false
+			end)
 		end
 	end
 
@@ -1218,56 +1330,39 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 
 	if Axis.Miscs.Utility.Movement.Emoties.Enabled and Axis.Miscs.Utility.Movement.Emoties.Keybind ~= '' then
 		if input.KeyCode == Enum.KeyCode[tostring(Axis.Miscs.Utility.Movement.Emoties.Keybind)] then
+			task.spawn(function()
 
-			if not L_Player.Character then
-				return
-			end
-
-			if not L_Player.Character:FindFirstChild('Humanoid') then
-				return
-			end
-
-			if ConnectionEmote then
-				ConnectionEmote:Disconnect()
-			end
-
-			if Track then
-				Track:Stop()
-			end
-			
-			local Hum = L_Player.Character:FindFirstChild('Humanoid')
-			local Animator:Animator = Hum:FindFirstChild('Animator')
-
-
-			if Axis.Miscs.Utility.Movement.Emoties.Emote == 'Greet' then
-				MainRemoteEvent:FireServer('AnimationPack', 'Greet')
-			elseif Axis.Miscs.Utility.Movement.Emoties.Emote == 'Yungblud Happier Jump' then
-
-				Track = Animator:LoadAnimation(Yungblud)
-				Track.Priority = Enum.AnimationPriority.Idle
-
-				ConnectionEmote = Hum:GetPropertyChangedSignal('MoveDirection'):Connect(function()
+				if ConnectionEmote then
 					ConnectionEmote:Disconnect()
-					Track:Stop()
-				end)
-
-				Track:Play()
-			end
-			if Axis.Miscs.Utility.Movement.Emoties.AutoEquip then
-				local GunName = '['.. Axis.Miscs.Utility.Movement.Emoties.EquipItem..']'
-				local FoundTool = L_Player.Backpack:FindFirstChild(GunName) or L_Player.Character:FindFirstChild(GunName)
-				if FoundTool then
-					if FoundTool.Parent == L_Player.Backpack then
-						Hum:EquipTool(FoundTool)
-						task.wait(0.02)
-						Hum:UnequipTools()
-					end
-					
-
-
-
 				end
-			end
+
+				if Track then
+					Track:Stop()
+				end
+
+				if Axis.Miscs.Utility.Movement.Emoties.Emote == 'Greet' then
+					MainRemoteEvent:FireServer('AnimationPack', 'Greet')
+				elseif Axis.Miscs.Utility.Movement.Emoties.Emote == 'Yungblud Happier Jump' then
+					Track = L_Animator:LoadAnimation(Yungblud)
+					Track.Priority = Enum.AnimationPriority.Idle
+					ConnectionEmote = L_Humanoid:GetPropertyChangedSignal('MoveDirection'):Connect(function()
+						ConnectionEmote:Disconnect()
+						Track:Stop()
+					end)
+					Track:Play()
+				end
+				if Axis.Miscs.Utility.Movement.Emoties.AutoEquip then
+					local GunName = '['.. Axis.Miscs.Utility.Movement.Emoties.EquipItem..']'
+					local FoundTool = Tools[tostring(GunName)]
+					if FoundTool then
+						if FoundTool.Parent == L_Backpack then
+							L_Humanoid:EquipTool(FoundTool)
+							task.wait(0.15)
+							L_Humanoid:UnequipTools()
+						end
+					end
+				end
+			end)
 		end
 	end 
 end)
@@ -2111,8 +2206,9 @@ do
 		Callback = function(val)
 			Axis.Main.SilentAim.NearestPart.Parts = {}
 			for index, value in next, val do
-				print(index)
-            	table.insert(Axis.Main.SilentAim.NearestPart.Parts, index)
+				if value then
+					table.insert(Axis.Main.SilentAim.NearestPart.Parts, index)
+				end
         	end
 		end
 	})
@@ -2139,7 +2235,9 @@ do
 		Callback = function(val)
 			Axis.Main.SilentAim.NearestPart.JumpParts = {}
 			for index, value in next, val do
-            	table.insert(Axis.Main.SilentAim.NearestPart.JumpParts, index)
+            	if value then
+					table.insert(Axis.Main.SilentAim.NearestPart.JumpParts, index)
+				end
         	end
 		end
 	})
@@ -2414,6 +2512,30 @@ local Guns = window:AddTab({
 	Icon = 'globe-detailed',
 	Name = "World"
 })
+
+
+do
+	local Esp = Utility:AddSection({
+		Name = "Esp"
+	})
+
+	
+	local Enabled = Esp:AddLabel('Enabled')
+	local Box = Esp:AddLabel('Box')
+	local Name = Esp:AddLabel('Name')
+
+
+	
+
+
+
+
+
+
+
+
+
+end
 
 
 
