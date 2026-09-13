@@ -2515,11 +2515,11 @@ local Guns = window:AddTab({
 
 
 do
-	local Esp = Utility:AddSection({
+	local Esp = Esp:AddSection({
 		Name = "Esp"
 	})
 
-	
+
 	local Enabled = Esp:AddLabel('Enabled')
 	local Box = Esp:AddLabel('Box')
 	local Name = Esp:AddLabel('Name')
